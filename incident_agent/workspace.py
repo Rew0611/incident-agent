@@ -1,4 +1,4 @@
-"""GitHub workspace: clone a repo into a local cache.
+"""GitHub workspace: clone a repo into a local cache, and open a pull request from changes.
 
 Git runs here, in code, never by the model; the agent only reads and edits files in
 the clone. The token is passed to git through the environment, never via argv or disk.
@@ -10,6 +10,7 @@ import base64
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -69,3 +70,18 @@ def checkout(repo: str, base: str | None = None) -> tuple[Path, str]:
     _git(path, "checkout", "--quiet", "-B", base, f"origin/{base}")
     return path, base
 
+
+def open_pr(path: Path, repo: str, base: str, title: str, body: str) -> str | None:
+    """Commit all changes on a new branch, push it and open a PR. None if nothing changed."""
+    if not _git(path, "status", "--porcelain"):
+        return None
+    branch = f"incident-agent/{time.strftime('%Y%m%d-%H%M%S')}"
+    _git(path, "checkout", "--quiet", "-b", branch)
+    _git(path, "add", "-A")
+    # Use the user's git identity if set, otherwise a neutral bot identity.
+    who = [] if _git(path, "config", "user.email", check=False) else [
+        "-c", "user.name=incident-agent", "-c", "user.email=incident-agent@users.noreply.github.com"]
+    _git(path, *who, "commit", "--quiet", "-m", title)
+    _git(path, "push", "--quiet", "origin", branch)
+    pr = _api("POST", f"/repos/{repo}/pulls", json={"title": title, "head": branch, "base": base, "body": body})
+    return pr["html_url"]
