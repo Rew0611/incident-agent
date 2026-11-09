@@ -1,9 +1,11 @@
-"""Read-only PagerDuty tools (REST API v2): recent incidents."""
+"""Read-only PagerDuty tools (REST API v2): recent incidents and incident details."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote
 
 from claude_agent_sdk import tool
 
@@ -12,7 +14,10 @@ from ._common import ok, request, safe
 
 NAME = "pagerduty"
 REQUIRED_ENV = ("PAGERDUTY_API_TOKEN",)
-CONTEXT = """PagerDuty (read-only): use pd_list_incidents to see what paged recently and when."""
+CONTEXT = """PagerDuty (read-only): use pd_list_incidents to see what paged recently and when,
+then pd_get_incident for one incident's alerts, timeline and notes.
+Alert `details` usually hold the monitoring payload (host, check, query, error text):
+use them as leads for log, metric and error searches."""
 
 STATUSES = ["triggered", "acknowledged", "resolved"]
 
@@ -30,6 +35,10 @@ async def _get(path: str, params: dict[str, Any] | None = None) -> Any:
 def _name(ref: dict[str, Any] | None) -> str | None:
     """Display name of a PagerDuty reference object (service, user, priority)."""
     return (ref or {}).get("summary")
+
+
+def _latest(items: list[dict[str, Any]], n: int = 10) -> list[dict[str, Any]]:
+    return sorted(items, key=lambda x: x.get("created_at", ""), reverse=True)[:n]
 
 
 @tool(
@@ -75,4 +84,55 @@ async def pd_list_incidents(args: dict[str, Any]) -> dict[str, Any]:
     return ok({"incidents": incidents, "more": data.get("more", False)})
 
 
-TOOLS = [pd_list_incidents]
+@tool(
+    "pd_get_incident",
+    "Get one PagerDuty incident: core fields, assignees, latest notes and timeline entries, and its "
+    "newest alerts with their `details` (the monitoring payload).",
+    {
+        "type": "object",
+        "properties": {"id": {"type": "string", "description": "Incident ID (e.g. PT4KHLK) or number."}},
+        "required": ["id"],
+    },
+)
+@safe
+async def pd_get_incident(args: dict[str, Any]) -> dict[str, Any]:
+    """Incident details plus alerts, overview log entries and notes."""
+    inc = (await _get(f"/incidents/{quote(str(args['id']), safe='')}"))["incident"]
+    path = f"/incidents/{inc['id']}"
+    alerts, log, notes = await asyncio.gather(
+        _get(f"{path}/alerts", {"limit": 10, "sort_by": "created_at:desc"}),
+        _get(f"{path}/log_entries", {"is_overview": "true", "limit": 100}),
+        _get(f"{path}/notes"),
+    )
+    return ok({
+        "id": inc["id"],
+        "number": inc.get("incident_number"),
+        "title": inc.get("title"),
+        "status": inc.get("status"),
+        "urgency": inc.get("urgency"),
+        "priority": _name(inc.get("priority")),
+        "service": _name(inc.get("service")),
+        "created_at": inc.get("created_at"),
+        "last_status_change_at": inc.get("last_status_change_at"),
+        "assignees": [_name(a.get("assignee")) for a in inc.get("assignments", [])],
+        "alert_counts": inc.get("alert_counts"),
+        "html_url": inc.get("html_url"),
+        "notes": [
+            {"at": n.get("created_at"), "by": _name(n.get("user")), "content": n.get("content")}
+            for n in _latest(notes.get("notes", []))
+        ],
+        "log_entries": [
+            {"at": e.get("created_at"), "type": e.get("type"), "summary": e.get("summary")}
+            for e in _latest(log.get("log_entries", []))
+        ],
+        # Kept last so the result size cap trims large alert payloads before anything else.
+        "alerts": [
+            {"id": a.get("id"), "summary": a.get("summary"), "status": a.get("status"),
+             "severity": a.get("severity"), "created_at": a.get("created_at"),
+             "details": (a.get("body") or {}).get("details")}
+            for a in alerts.get("alerts", [])
+        ],
+    })
+
+
+TOOLS = [pd_list_incidents, pd_get_incident]
