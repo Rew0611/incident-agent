@@ -12,9 +12,9 @@ from typing import Any
 from claude_agent_sdk import create_sdk_mcp_server
 
 from .. import config
-from . import elasticsearch, pagerduty, sentry
+from . import elasticsearch, github, pagerduty, sentry
 
-PACKS: tuple[ModuleType, ...] = (pagerduty, sentry, elasticsearch)
+PACKS: tuple[ModuleType, ...] = (pagerduty, sentry, elasticsearch, github)
 
 
 def enabled() -> list[ModuleType]:
