@@ -43,6 +43,7 @@ def build_options(repo: Path, fix: bool) -> ClaudeAgentOptions:
         mcp_servers=servers,
         setting_sources=[],  # ignore local Claude settings so runs are predictable
         max_turns=int(config.get("AGENT_MAX_TURNS", "40")),
+        env={"ENABLE_TOOL_SEARCH": "false"},  # few tools: load all definitions upfront
     )
 
 
