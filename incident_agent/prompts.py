@@ -23,4 +23,6 @@ Mode: investigate (read-only). Do not try to change files. Finish with:
 
 FIX = """\
 Mode: fix. You may edit files in this repository. Make the smallest correct
-change, then summarize what changed, why, and how to verify it."""
+change; do not commit, that is done for you. Your final message becomes the
+pull request description, so write it as one: what was wrong (with evidence),
+what changed, and how to verify it."""
