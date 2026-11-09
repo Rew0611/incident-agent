@@ -12,8 +12,10 @@ from ._common import ok, request, safe
 
 NAME = "elasticsearch"
 REQUIRED_ENV = ("ELASTICSEARCH_URL",)
-CONTEXT = """Elasticsearch holds application logs. es_search_logs reads the actual lines.
-Queries use Lucene syntax, e.g. `level:error AND service.name:api`. Default window: last 60 minutes."""
+CONTEXT = """Elasticsearch holds application logs. If unsure of field names, call es_list_fields first.
+es_top_values shows which service/host/error dominates; es_search_logs reads the actual lines.
+Queries use Lucene syntax, e.g. `level:error AND service.name:api`. Default window: last 60 minutes.
+es_top_values needs a keyword field (often the `.keyword` subfield of a text field)."""
 
 _INDEX = {"type": "string", "description": "Index pattern. Default: ELASTICSEARCH_INDEX or logs-*."}
 _QUERY = {"type": "string", "description": "Lucene query_string syntax. Default '*' (all)."}
@@ -98,4 +100,55 @@ async def es_search_logs(args: dict) -> dict:
     return ok("\n".join(lines))
 
 
-TOOLS = [es_search_logs]
+@tool(
+    "es_top_values",
+    "Top values of a keyword field with counts over matching logs, to spot which service/host/error dominates.",
+    {
+        "type": "object",
+        "properties": {
+            "field": {"type": "string", "description": "Keyword field, e.g. service.name or error.type.keyword."},
+            "query": _QUERY,
+            "minutes_back": _MINUTES,
+            "size": {"type": "integer", "description": "Number of values. Default 10."},
+            "index": _INDEX,
+        },
+        "required": ["field"],
+    },
+)
+@safe
+async def es_top_values(args: dict) -> dict:
+    field = args["field"]
+    terms = {"field": field, "size": int(args.get("size", 10))}
+    resp = await _search(args, size=0, aggs={"top": {"terms": terms}})
+    total, agg = resp["hits"]["total"]["value"], resp["aggregations"]["top"]
+    lines = [f"{total} matching docs; top values of {field}:"]
+    lines += [f"{b['key']}: {b['doc_count']} ({100 * b['doc_count'] / total:.1f}%)" for b in agg["buckets"]]
+    if agg["sum_other_doc_count"]:
+        lines.append(f"(other values: {agg['sum_other_doc_count']})")
+    return ok("\n".join(lines))
+
+
+@tool(
+    "es_list_fields",
+    "List field names (dotted paths) and types from the index mapping, to write correct queries.",
+    {"type": "object", "properties": {"index": _INDEX}, "required": []},
+)
+@safe
+async def es_list_fields(args: dict) -> dict:
+    resp = await request("GET", _url(args, "_mapping"), **_auth())
+    fields: dict[str, set[str]] = {}
+
+    def walk(props: dict, prefix: str = "") -> None:
+        for name, spec in props.items():
+            if "properties" in spec:  # object field: recurse into children
+                walk(spec["properties"], f"{prefix}{name}.")
+            else:
+                fields.setdefault(prefix + name, set()).add(spec.get("type", "object"))
+            walk(spec.get("fields", {}), f"{prefix}{name}.")  # multi-fields, e.g. message.keyword
+
+    for index in resp.values():
+        walk(index.get("mappings", {}).get("properties", {}))
+    return ok("\n".join(f"{f} {'|'.join(sorted(t))}" for f, t in sorted(fields.items())) or "No fields found.")
+
+
+TOOLS = [es_search_logs, es_top_values, es_list_fields]
