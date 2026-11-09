@@ -3,8 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
-from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ResultMessage,
+    TextBlock,
+    ToolUseBlock,
+    query,
+)
 
 from . import config, prompts, tools
 
@@ -39,7 +47,19 @@ def build_options(repo: Path, fix: bool) -> ClaudeAgentOptions:
 
 
 async def run(task: str, repo: Path, fix: bool = False) -> None:
-    """Run one task and print the final answer."""
+    """Run one task, printing the agent's messages and tool calls as they happen."""
     async for message in query(prompt=task, options=build_options(repo, fix)):
-        if isinstance(message, ResultMessage):
-            print(message.result or f"[{message.subtype}]")
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    print(block.text, flush=True)
+                elif isinstance(block, ToolUseBlock):
+                    print(f"  > {block.name} {_brief(block.input)}", flush=True)
+        elif isinstance(message, ResultMessage):
+            cost = f"${message.total_cost_usd:.2f}" if message.total_cost_usd is not None else "n/a"
+            print(f"\n[{message.subtype}] turns={message.num_turns} cost={cost}")
+
+
+def _brief(args: dict[str, Any], limit: int = 120) -> str:
+    text = ", ".join(f"{k}={v!r}" for k, v in args.items())
+    return text if len(text) <= limit else text[: limit - 3] + "..."
