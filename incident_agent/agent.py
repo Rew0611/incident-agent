@@ -38,7 +38,8 @@ def build_options(repo: Path, fix: bool) -> ClaudeAgentOptions:
             "append": f"{prompts.BASE}\n\n{mode}\n\n# Integrations\n{notes}",
         },
         tools=builtins,  # the only built-in tools the model can see (no shell)
-        allowed_tools=builtins + tool_names,  # pre-approved
+        # Pre-approved: reads and (in fix mode) edits inside the repo only, plus integration tools.
+        allowed_tools=["Read(/**)", *(["Edit(/**)"] if fix else []), *tool_names],
         permission_mode="dontAsk",  # anything not pre-approved is denied, never prompted
         mcp_servers=servers,
         setting_sources=[],  # ignore local Claude settings so runs are predictable
