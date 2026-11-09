@@ -14,5 +14,8 @@ dependencies = [
     "python-dotenv>=1.0",
 ]
 
+[project.scripts]
+incident-agent = "incident_agent.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["incident_agent*"]
