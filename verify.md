@@ -9,14 +9,26 @@ Assumptions this code makes that have **not been run yet**. Check each one and m
 - [ ] `ANTHROPIC_API_KEY` from `.env` reaches the SDK subprocess (dotenv sets `os.environ`; Python `env=` is merged on top of it).
 - [ ] `tools=[...]` limits the built-in tools the model sees, so there is no `Bash` in either mode. Check: ask the agent to run `ls` and confirm it says it can't.
 - [ ] `permission_mode="dontAsk"` denies anything not in `allowed_tools` without prompting. Check: in investigate mode, ask it to edit a file; it must refuse or fail.
+- [ ] `Read(/**)` and `Edit(/**)` match only paths inside the working directory (single leading `/`), and the `Edit` rule also covers `Write`. Check: ask it to read `~/.ssh/config`; it must be denied.
+- [ ] `Grep` and `Glob` inside the working directory run without an allow rule (file reads inside working dirs need no approval).
 - [ ] `setting_sources=[]` loads no user/project/local settings (needs SDK > 0.1.59).
 - [ ] MCP tools are named `mcp__<server key>__<tool name>`, where the server key is the pack `NAME`.
 - [ ] `SdkMcpTool.name` holds the tool name (used to build `allowed_tools`).
 - [ ] The `{"type": "preset", "preset": "claude_code", "append": ...}` system prompt keeps Claude Code's tool guidance and adds ours.
-- [ ] `env={"ENABLE_TOOL_SEARCH": "false"}` loads all 7 tool definitions upfront (no ToolSearch step, which `tools=[...]` might hide).
+- [ ] `env={"ENABLE_TOOL_SEARCH": "false"}` loads all 8 tool definitions upfront (no ToolSearch step, which `tools=[...]` might hide).
 - [ ] Returning `{"content": [...], "is_error": True}` from a handler marks the call as failed.
 - [ ] A failed single-shot `query()` raises a `ClaudeSDKError` subclass (`ResultError`, SDK >= 0.2.140), caught in `cli.py`.
 - [ ] `claude-opus-5-5` is accepted as `model`.
+
+## GitHub (`workspace.py`, `tools/github.py`)
+
+- [ ] git over HTTPS accepts the header `AUTHORIZATION: basic base64("x-access-token:<token>")` for classic and fine-grained personal tokens (the header `actions/checkout` uses).
+- [ ] `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_0` / `GIT_CONFIG_VALUE_0` set that header without writing it to `.git/config` (git >= 2.31). Check: `cat ~/.cache/incident-agent/<owner>/<name>/.git/config` has no token.
+- [ ] `GET /repos/{repo}` returns `default_branch`; `GET /repos/{repo}/commits` takes `since`, `sha`, `path`, `per_page` (max 100).
+- [ ] `POST /repos/{repo}/pulls` with `title`, `head`, `base`, `body` returns `html_url`. Check: a `--fix` run on a test repo opens a PR.
+- [ ] Each run resets the clone to `origin/<base>` (`reset --hard`, `clean -fd`): edits left in the cache are discarded by design.
+- [ ] Commits use the user's git identity, or `incident-agent` when `user.email` is not set.
+- [ ] A relative `--repo` like `foo/bar` that is not a local directory is treated as a GitHub repo.
 
 ## PagerDuty (`tools/pagerduty.py`)
 
@@ -52,3 +64,4 @@ Assumptions this code makes that have **not been run yet**. Check each one and m
 1. `cp sample.env .env`, fill in one integration, run `incident-agent "List the 5 most recent incidents" --repo .`
 2. Confirm tool calls print as `> mcp__...` and the run ends with `[success]`.
 3. Try a bad token: the tool should return an `HTTP 401 ...` error, not crash the run.
+4. On a throwaway GitHub repo: `incident-agent "Add a comment to the README" --repo you/test --fix` must open a PR.
